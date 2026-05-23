@@ -1,3 +1,14 @@
+// Catch any uncaught errors and log them BEFORE anything else loads
+process.on('uncaughtException', (err) => {
+    console.error('UNCAUGHT EXCEPTION:', err.message);
+    console.error(err.stack);
+    process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('UNHANDLED REJECTION:', reason);
+    process.exit(1);
+});
+
 require('dotenv').config();
 const app = require('./src/app');
 const mongoose = require('mongoose');
