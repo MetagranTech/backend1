@@ -40,10 +40,14 @@ exports.protect = async (req, res, next) => {
 
 exports.authorize = (...roles) => {
     return (req, res, next) => {
-        // Since we don't have explicit roles in the model yet, we can check the model name or status
-        // For Admin panel, we might need a separate Admin model or a role field
         next();
     };
+};
+
+exports.admin = (req, res, next) => {
+    // Admin check middleware - passes through for now
+    // In production, check if user has admin role
+    next();
 };
 
 exports.verifyFirebaseToken = async (req, res, next) => {
