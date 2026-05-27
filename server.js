@@ -1,4 +1,4 @@
-// Catch any uncaught errors and log them BEFORE anything else loads
+// Catch any uncaught errors and print them before exiting
 process.on('uncaughtException', (err) => {
     console.error('UNCAUGHT EXCEPTION:', err.message);
     console.error(err.stack);
