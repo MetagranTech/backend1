@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { validatePositiveAmount, validateBookingInput } = require('../src/middleware/validate');
 const Service = require('../src/models/Service');
+const userController = require('../src/controllers/userController');
 const { _test: authTest } = require('../src/controllers/authController');
 
 const responseDouble = () => {
@@ -38,6 +39,19 @@ test('Indian phone normalization accepts mobile numbers and rejects invalid inpu
     assert.equal(authTest.normalizePhone('98765 43210'), '+919876543210');
     assert.equal(authTest.normalizePhone('+91-98765-43210'), '+919876543210');
     assert.equal(authTest.normalizePhone('12345'), null);
+});
+
+test('customer profile setup accepts a single-line address', async () => {
+    const addresses = [];
+    const req = {
+        body: { street: '12 Anna Nagar, Chennai, Tamil Nadu 600040', isDefault: true },
+        user: { addresses, save: async () => undefined }
+    };
+    const res = responseDouble();
+    await userController.addAddress(req, res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(addresses[0].street, req.body.street);
+    assert.equal(addresses[0].city, '');
 });
 
 test('health route responds without database access', async () => {

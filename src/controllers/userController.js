@@ -10,11 +10,19 @@ exports.updateProfile = async (req, res) => {
 
 exports.addAddress = async (req, res) => {
     const { label, street, city, state, zipCode, coordinates, isDefault } = req.body;
-    if (!street?.trim() || !city?.trim() || !state?.trim() || !zipCode?.trim()) {
-        return res.status(400).json({ success: false, message: 'Complete address is required' });
+    if (!street?.trim()) {
+        return res.status(400).json({ success: false, message: 'Address is required' });
     }
     if (isDefault) req.user.addresses.forEach((address) => { address.isDefault = false; });
-    req.user.addresses.push({ label, street, city, state, zipCode, coordinates, isDefault: Boolean(isDefault) });
+    req.user.addresses.push({
+        label: label?.trim() || 'Home',
+        street: street.trim(),
+        city: city?.trim() || '',
+        state: state?.trim() || '',
+        zipCode: zipCode?.trim() || '',
+        coordinates,
+        isDefault: Boolean(isDefault)
+    });
     await req.user.save();
     res.status(201).json({ success: true, addresses: req.user.addresses });
 };
@@ -22,6 +30,9 @@ exports.addAddress = async (req, res) => {
 exports.updateAddress = async (req, res) => {
     const address = req.user.addresses.id(req.params.id);
     if (!address) return res.status(404).json({ success: false, message: 'Address not found' });
+    if (req.body.street !== undefined && !req.body.street?.trim()) {
+        return res.status(400).json({ success: false, message: 'Address is required' });
+    }
     if (req.body.isDefault) req.user.addresses.forEach((item) => { item.isDefault = false; });
     Object.assign(address, req.body);
     await req.user.save();
