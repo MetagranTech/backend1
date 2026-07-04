@@ -79,6 +79,11 @@ const providerSchema = new mongoose.Schema({
     },
     lastLocationUpdate: Date,
     fcmToken: String,
+    firebaseUid: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
     status: {
         type: String,
         enum: ['pending', 'active', 'suspended'],

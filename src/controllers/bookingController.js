@@ -1,239 +1,192 @@
+const crypto = require('crypto');
 const Booking = require('../models/Booking');
 const Service = require('../models/Service');
 const Provider = require('../models/Provider');
 const User = require('../models/User');
+const Transaction = require('../models/Transaction');
 const { sendNotification, sendMulticastNotification } = require('../utils/notificationHelper');
 
-// @desc    Create a new booking
-// @route   POST /api/bookings
-// @access  Private (Customer)
+const totalPricing = (service, baseAmount, extraPartsAmount = 0) => {
+    const taxable = Number(baseAmount) + Number(extraPartsAmount);
+    const gstAmount = Number((taxable * service.gstPercentage / 100).toFixed(2));
+    const platformFee = Number(service.platformFee);
+    return {
+        baseAmount: Number(baseAmount),
+        inspectionCharge: service.pricingType === 'inspection' ? Number(service.basePrice) : 0,
+        extraPartsAmount: Number(extraPartsAmount),
+        gstAmount,
+        platformFee,
+        totalAmount: Number((taxable + gstAmount + platformFee).toFixed(2)),
+        providerCommission: 20,
+        amountPaid: 0,
+        quoteStatus: service.pricingType === 'inspection' ? 'pending_customer' : 'not_required'
+    };
+};
+
 exports.createBooking = async (req, res) => {
-    try {
-        const { serviceId, address, scheduledDate, timeSlot, issueDescription, media } = req.body;
+    const { serviceId, address, scheduledDate, timeSlot, issueDescription, media, paymentMethod } = req.body;
+    const service = await Service.findOne({ _id: serviceId, isActive: true });
+    if (!service) return res.status(404).json({ success: false, message: 'Service not found or inactive' });
 
-        const service = await Service.findById(serviceId);
-        if (!service) {
-            return res.status(404).json({ success: false, message: 'Service not found' });
-        }
+    const pricing = totalPricing(service, service.basePrice);
+    if (service.pricingType === 'inspection') pricing.quoteStatus = 'not_required';
+    const booking = await Booking.create({
+        bookingId: `HSI${Date.now().toString(36).toUpperCase()}${crypto.randomInt(100, 999)}`,
+        customer: req.user._id,
+        service: serviceId,
+        address,
+        scheduledDate,
+        timeSlot,
+        issueDescription: issueDescription?.trim(),
+        media: Array.isArray(media) ? media.slice(0, 6) : [],
+        paymentMethod: ['online', 'wallet', 'cash'].includes(paymentMethod) ? paymentMethod : 'online',
+        pricing
+    });
 
-        // Generate a unique Booking ID
-        const bookingId = 'HSI' + Math.floor(100000 + Math.random() * 900000);
-
-        const booking = await Booking.create({
-            bookingId,
-            customer: req.user._id,
-            service: serviceId,
-            address,
-            scheduledDate,
-            timeSlot,
-            issueDescription,
-            media,
-            pricing: {
-                baseAmount: service.basePrice,
-                inspectionCharge: service.pricingType === 'inspection' ? service.basePrice : 0,
-                gstAmount: (service.basePrice * service.gstPercentage) / 100,
-                platformFee: service.platformFee,
-                totalAmount: service.basePrice + ((service.basePrice * service.gstPercentage) / 100) + service.platformFee
-            }
-        });
-
-        // Notify nearby providers
-        const nearbyProviders = await Provider.find({
-            status: 'active',
-            isOnline: true,
-            categories: service.category
-        }).select('fcmToken');
-
-        const tokens = nearbyProviders.map(p => p.fcmToken).filter(t => t);
-        await sendMulticastNotification(tokens, {
-            title: 'New Booking Available!',
-            body: `A new ${service.name} job is available near you.`
-        }, { bookingId: booking._id.toString() });
-
-        res.status(201).json({ success: true, booking });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
+    const nearbyProviders = await Provider.find({
+        status: 'active', isOnline: true, categories: service.category, fcmToken: { $exists: true, $ne: '' }
+    }).select('fcmToken');
+    await sendMulticastNotification(nearbyProviders.map((p) => p.fcmToken), {
+        title: 'New booking available', body: `${service.name} job is available.`
+    }, { bookingId: booking._id.toString() });
+    res.status(201).json({ success: true, booking: await booking.populate('service') });
 };
 
-// @desc    Get all bookings for a user/provider
-// @route   GET /api/bookings
-// @access  Private
 exports.getBookings = async (req, res) => {
-    try {
-        let query = {};
-        if (req.user.constructor.modelName === 'User') {
-            query.customer = req.user._id;
-        } else {
-            query.provider = req.user._id;
-        }
-
-        const bookings = await Booking.find(query)
-            .populate('service')
-            .populate('customer', 'name phone')
-            .populate('provider', 'name phone profilePic')
-            .sort('-createdAt');
-
-        res.status(200).json({ success: true, bookings });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
+    const query = req.authType === 'customer' ? { customer: req.user._id } : { provider: req.user._id };
+    const bookings = await Booking.find(query)
+        .select(req.authType === 'provider' ? '-otp' : '')
+        .populate('service').populate('customer', 'name phone').populate('provider', 'name phone profilePic')
+        .sort('-createdAt');
+    res.json({ success: true, bookings });
 };
 
-// @desc    Update booking status
-// @route   PUT /api/bookings/:id/status
-// @access  Private (Provider/Customer)
-exports.updateStatus = async (req, res) => {
-    try {
-        const { status, otp } = req.body;
-        const booking = await Booking.findById(req.params.id);
-
-        if (!booking) {
-            return res.status(404).json({ success: false, message: 'Booking not found' });
-        }
-
-        // Add logic for status transitions and OTP verification
-        if (status === 'started' && booking.otp !== otp) {
-             // return res.status(400).json({ success: false, message: 'Invalid OTP' });
-        }
-
-        booking.status = status;
-        await booking.save();
-
-        res.status(200).json({ success: true, booking });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
+exports.getBooking = async (req, res) => {
+    const ownership = req.authType === 'customer' ? { customer: req.user._id } : { provider: req.user._id };
+    const booking = await Booking.findOne({ _id: req.params.id, ...ownership })
+        .select(req.authType === 'provider' ? '-otp' : '')
+        .populate('service').populate('customer', 'name phone').populate('provider', 'name phone profilePic');
+    if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
+    res.json({ success: true, booking });
 };
 
-// @desc    Accept a booking
-// @route   PUT /api/bookings/:id/accept
-// @access  Private (Provider)
 exports.acceptBooking = async (req, res) => {
-    try {
-        const booking = await Booking.findById(req.params.id);
-
-        if (!booking) {
-            return res.status(404).json({ success: false, message: 'Booking not found' });
-        }
-
-        if (booking.status !== 'pending') {
-            return res.status(400).json({ success: false, message: 'Booking already accepted or cancelled' });
-        }
-
-        booking.provider = req.user._id;
-        booking.status = 'accepted';
-        // Generate OTP for service start
-        booking.otp = Math.floor(1000 + Math.random() * 9000).toString();
-        
-        await booking.save();
-
-        res.status(200).json({ success: true, booking });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+    if (!req.user.isOnline || req.user.status !== 'active') {
+        return res.status(403).json({ success: false, message: 'Provider must be approved and online' });
     }
-};
-// @desc    Technician arrived at location
-// @route   PUT /api/bookings/:id/arrive
-// @access  Private (Provider)
-exports.arriveAtLocation = async (req, res) => {
-    try {
-        const booking = await Booking.findById(req.params.id);
-        if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
-
-        booking.status = 'arrived';
-        await booking.save();
-
-        // Notify Customer
-        const customer = await User.findById(booking.customer).select('fcmToken');
-        if (customer?.fcmToken) {
-            await sendNotification(customer.fcmToken, {
-                title: 'Technician Arrived',
-                body: 'Your technician has reached your location.'
-            });
-        }
-
-        res.status(200).json({ success: true, booking });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+    const candidate = await Booking.findById(req.params.id).populate('service');
+    if (!candidate || !candidate.service || !req.user.categories.includes(candidate.service.category)) {
+        return res.status(404).json({ success: false, message: 'Eligible booking not found' });
     }
+    const booking = await Booking.findOneAndUpdate(
+        { _id: req.params.id, status: 'pending', provider: null },
+        { provider: req.user._id, status: 'accepted', otp: crypto.randomInt(1000, 10000).toString() },
+        { new: true }
+    ).select('-otp').populate('service customer');
+    if (!booking) return res.status(409).json({ success: false, message: 'Booking was already accepted' });
+    const customer = await User.findById(booking.customer).select('fcmToken');
+    await sendNotification(customer?.fcmToken, { title: 'Technician assigned', body: `${req.user.name} accepted your booking.` }, { bookingId: booking._id.toString() });
+    res.json({ success: true, booking });
 };
 
-// @desc    Start service with OTP verification
-// @route   PUT /api/bookings/:id/start
-// @access  Private (Provider)
+const providerTransition = (from, to) => async (req, res) => {
+    const booking = await Booking.findOneAndUpdate(
+        { _id: req.params.id, provider: req.user._id, status: from },
+        { status: to }, { new: true }
+    ).select('-otp');
+    if (!booking) return res.status(409).json({ success: false, message: `Booking must be ${from} before this action` });
+    res.json({ success: true, booking });
+};
+
+exports.arriveAtLocation = providerTransition('accepted', 'arrived');
+
 exports.startService = async (req, res) => {
-    const { otp } = req.body;
-
-    try {
-        const booking = await Booking.findById(req.params.id);
-        if (booking.otp !== otp) {
-            return res.status(400).json({ success: false, message: 'Invalid OTP. Please ask the customer for the correct code.' });
-        }
-
-        booking.status = 'started';
-        await booking.save();
-
-        res.status(200).json({ success: true, message: 'Service started successfully', booking });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
+    const booking = await Booking.findOneAndUpdate(
+        { _id: req.params.id, provider: req.user._id, status: 'arrived', otp: String(req.body.otp || '') },
+        { status: 'started' }, { new: true }
+    ).select('-otp');
+    if (!booking) return res.status(400).json({ success: false, message: 'Invalid OTP or booking state' });
+    res.json({ success: true, booking });
 };
 
-// @desc    Complete service
-// @route   PUT /api/bookings/:id/complete
-// @access  Private (Provider)
+exports.submitQuote = async (req, res) => {
+    const baseAmount = Number(req.body.baseAmount);
+    const extraPartsAmount = Number(req.body.extraPartsAmount || 0);
+    if (!Number.isFinite(baseAmount) || baseAmount <= 0 || !Number.isFinite(extraPartsAmount) || extraPartsAmount < 0) {
+        return res.status(400).json({ success: false, message: 'Valid quote amounts are required' });
+    }
+    const booking = await Booking.findOne({ _id: req.params.id, provider: req.user._id, status: { $in: ['arrived', 'started'] } }).populate('service');
+    if (!booking || booking.service.pricingType !== 'inspection') {
+        return res.status(409).json({ success: false, message: 'Inspection quote is not available for this booking' });
+    }
+    const alreadyPaid = Number(booking.pricing?.amountPaid || 0);
+    booking.pricing = totalPricing(booking.service, baseAmount, extraPartsAmount);
+    booking.pricing.amountPaid = alreadyPaid;
+    booking.pricing.quoteStatus = 'pending_customer';
+    if (alreadyPaid < booking.pricing.totalAmount) {
+        booking.paymentStatus = 'pending';
+        booking.razorpayOrderId = undefined;
+        booking.razorpayOrderAmount = undefined;
+    }
+    await booking.save();
+    res.json({ success: true, booking });
+};
+
+exports.approveQuote = async (req, res) => {
+    const status = req.body.approved ? 'approved' : 'rejected';
+    const booking = await Booking.findOneAndUpdate(
+        { _id: req.params.id, customer: req.user._id, 'pricing.quoteStatus': 'pending_customer' },
+        { 'pricing.quoteStatus': status }, { new: true }
+    );
+    if (!booking) return res.status(409).json({ success: false, message: 'No quote is awaiting approval' });
+    res.json({ success: true, booking });
+};
+
 exports.completeService = async (req, res) => {
-    try {
-        const booking = await Booking.findById(req.params.id).populate('service');
-        
-        booking.status = 'completed';
-        await booking.save();
-
-        // Calculate earnings (e.g., 80% to provider, 20% commission)
-        const totalAmount = booking.pricing.totalAmount;
-        const providerEarnings = totalAmount * 0.8;
-
-        const provider = await Provider.findById(booking.provider);
-        provider.walletBalance += providerEarnings;
-        await provider.save();
-
-        // Record Transaction
-        const Transaction = require('../models/Transaction');
-        await Transaction.create({
-            provider: provider._id,
-            booking: booking._id,
-            type: 'credit',
-            amount: providerEarnings,
-            description: `Earnings for ${booking.service.name}`
-        });
-
-        res.status(200).json({ success: true, message: 'Service completed and earnings added to wallet', booking });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+    const current = await Booking.findOne({ _id: req.params.id, provider: req.user._id, status: 'started' }).select('+earningsCredited').populate('service');
+    if (!current) return res.status(409).json({ success: false, message: 'Only a started booking can be completed' });
+    if (current.pricing.quoteStatus === 'pending_customer' || current.pricing.quoteStatus === 'rejected') {
+        return res.status(409).json({ success: false, message: 'Customer must approve the inspection quote' });
     }
+    if (current.paymentMethod === 'online' && current.paymentStatus !== 'paid') {
+        return res.status(402).json({ success: false, message: 'Online payment is not completed' });
+    }
+    const booking = await Booking.findOneAndUpdate(
+        { _id: current._id, status: 'started', earningsCredited: false },
+        { status: 'completed', completedAt: new Date(), earningsCredited: true }, { new: true }
+    ).populate('service');
+    if (!booking) return res.status(409).json({ success: false, message: 'Booking already completed' });
+
+    const providerEarnings = Number((booking.pricing.totalAmount * 0.8).toFixed(2));
+    await Provider.findByIdAndUpdate(req.user._id, { $inc: { walletBalance: providerEarnings } });
+    await Transaction.create({
+        provider: req.user._id, booking: booking._id, type: 'credit', amount: providerEarnings,
+        description: `Earnings for ${booking.service.name}`
+    });
+    res.json({ success: true, message: 'Service completed', booking, providerEarnings });
 };
 
-// @desc    Cancel a booking
-// @route   PUT /api/bookings/:id/cancel
-// @access  Private (Customer/Provider)
 exports.cancelBooking = async (req, res) => {
-    try {
-        const booking = await Booking.findById(req.params.id);
-        
-        if (!booking) {
-            return res.status(404).json({ success: false, message: 'Booking not found' });
-        }
+    const ownership = req.authType === 'customer' ? { customer: req.user._id } : { provider: req.user._id };
+    const allowed = req.authType === 'customer' ? ['pending', 'accepted'] : ['accepted'];
+    const booking = await Booking.findOneAndUpdate(
+        { _id: req.params.id, ...ownership, status: { $in: allowed } },
+        { status: 'cancelled', cancelledAt: new Date(), cancellationReason: req.body.reason?.trim() },
+        { new: true }
+    );
+    if (!booking) return res.status(409).json({ success: false, message: 'Booking cannot be cancelled in its current state' });
+    res.json({ success: true, booking });
+};
 
-        if (booking.status === 'completed' || booking.status === 'started') {
-            return res.status(400).json({ success: false, message: 'Cannot cancel a started or completed service' });
-        }
-
-        booking.status = 'cancelled';
-        await booking.save();
-
-        res.status(200).json({ success: true, message: 'Booking cancelled successfully', booking });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
+exports.rateBooking = async (req, res) => {
+    const score = Number(req.body.score);
+    if (!Number.isInteger(score) || score < 1 || score > 5) return res.status(400).json({ success: false, message: 'Rating must be from 1 to 5' });
+    const booking = await Booking.findOneAndUpdate(
+        { _id: req.params.id, customer: req.user._id, status: 'completed', 'rating.score': { $exists: false } },
+        { rating: { score, comment: req.body.comment?.trim() } }, { new: true }
+    );
+    if (!booking) return res.status(409).json({ success: false, message: 'Booking cannot be rated' });
+    const ratings = await Booking.aggregate([{ $match: { provider: booking.provider, 'rating.score': { $exists: true } } }, { $group: { _id: null, average: { $avg: '$rating.score' }, count: { $sum: 1 } } }]);
+    await Provider.findByIdAndUpdate(booking.provider, { rating: ratings[0]?.average || 0, totalRatings: ratings[0]?.count || 0 });
+    res.json({ success: true, booking });
 };

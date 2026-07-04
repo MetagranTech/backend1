@@ -3,15 +3,28 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
+const { webhook } = require('./controllers/paymentController');
+const { protect, admin } = require('./middleware/auth');
+const { rateLimit } = require('./middleware/rateLimit');
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean);
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
+        callback(new Error('Origin not allowed by CORS'));
+    },
+    credentials: true
+}));
 app.use(morgan('dev'));
+app.post('/api/payments/webhook', express.raw({ type: 'application/json', limit: '1mb' }), webhook);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/api', rateLimit({ windowMs: 60 * 1000, max: 180 }));
 
 // Serve static files (if any)
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -24,6 +37,9 @@ app.use('/api/providers', require('./routes/providerRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/complaints', require('./routes/complaintRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
+app.use('/api/services', require('./routes/serviceRoutes'));
+app.use('/api/users', require('./routes/userRoutes'));
+app.use('/api/config', require('./routes/configRoutes'));
 
 // FAQ Routes (inline for simplicity)
 const FAQ = require('./models/FAQ');
@@ -31,7 +47,7 @@ app.get('/api/faqs', async (req, res) => {
     const faqs = await FAQ.find({ isActive: true });
     res.json({ success: true, faqs });
 });
-app.post('/api/faqs', async (req, res) => {
+app.post('/api/faqs', protect, admin, async (req, res) => {
     const faq = await FAQ.create(req.body);
     res.status(201).json({ success: true, faq });
 });
@@ -42,8 +58,10 @@ app.get('/', (req, res) => {
 
 // Health check
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'OK', timestamp: new Date() });
+    res.status(200).json({ status: 'OK', database: require('mongoose').connection.readyState === 1 ? 'connected' : 'disconnected', timestamp: new Date() });
 });
+
+app.use((req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

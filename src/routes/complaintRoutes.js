@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const { raiseComplaint, getMyComplaints, getAllComplaints, resolveComplaint } = require('../controllers/complaintController');
-const { protect } = require('../middleware/auth');
+const { protect, authorize, admin } = require('../middleware/auth');
 
 router.use(protect);
 
-router.post('/', raiseComplaint);
-router.get('/', getMyComplaints);
-router.get('/admin/all', getAllComplaints);
-router.put('/admin/:id/resolve', resolveComplaint);
+router.post('/', authorize('customer'), raiseComplaint);
+router.get('/', authorize('customer'), getMyComplaints);
+router.get('/admin/all', admin, getAllComplaints);
+router.put('/admin/:id/resolve', admin, resolveComplaint);
 
 module.exports = router;

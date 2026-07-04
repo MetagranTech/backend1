@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Provider = require('../models/Provider');
-const admin = require('firebase-admin');
+const Admin = require('../models/Admin');
 
 // Firebase Admin initialization (should be done in a separate config file ideally)
 // For now, we'll assume it's initialized in config/firebase.js
@@ -21,17 +21,21 @@ exports.protect = async (req, res, next) => {
         // Verify token
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        // Check if user/provider exists
-        let user = await User.findById(decoded.id);
-        if (!user) {
-            user = await Provider.findById(decoded.id);
-        }
+        const models = { customer: User, provider: Provider, admin: Admin };
+        const Model = models[decoded.type];
+        if (!Model) return res.status(401).json({ success: false, message: 'Invalid token type' });
+        const user = await Model.findById(decoded.id);
 
         if (!user) {
             return res.status(401).json({ success: false, message: 'User no longer exists' });
         }
 
+        if (user.status === 'suspended') {
+            return res.status(403).json({ success: false, message: 'Account is suspended' });
+        }
         req.user = user;
+        req.authType = decoded.type;
+        req.role = decoded.role || decoded.type;
         next();
     } catch (err) {
         return res.status(401).json({ success: false, message: 'Not authorized to access this route' });
@@ -40,28 +44,16 @@ exports.protect = async (req, res, next) => {
 
 exports.authorize = (...roles) => {
     return (req, res, next) => {
+        if (!roles.includes(req.role) && !roles.includes(req.authType)) {
+            return res.status(403).json({ success: false, message: 'You do not have permission for this action' });
+        }
         next();
     };
 };
 
 exports.admin = (req, res, next) => {
-    // Admin check middleware - passes through for now
-    // In production, check if user has admin role
+    if (req.authType !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Admin access required' });
+    }
     next();
-};
-
-exports.verifyFirebaseToken = async (req, res, next) => {
-    const idToken = req.body.idToken;
-
-    if (!idToken) {
-        return res.status(400).json({ success: false, message: 'Firebase ID Token is required' });
-    }
-
-    try {
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
-        req.firebaseUser = decodedToken;
-        next();
-    } catch (error) {
-        return res.status(401).json({ success: false, message: 'Invalid Firebase Token', error: error.message });
-    }
 };

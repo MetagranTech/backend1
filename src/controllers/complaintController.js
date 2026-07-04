@@ -8,6 +8,8 @@ exports.raiseComplaint = async (req, res) => {
     const { bookingId, subject, description } = req.body;
 
     try {
+        const booking = await Booking.findOne({ _id: bookingId, customer: req.user._id });
+        if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
         const complaint = await Complaint.create({
             booking: bookingId,
             user: req.user._id,

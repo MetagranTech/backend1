@@ -27,4 +27,9 @@ const transactionSchema = new mongoose.Schema({
     }
 }, { timestamps: true });
 
+transactionSchema.index(
+    { booking: 1, type: 1 },
+    { unique: true, partialFilterExpression: { booking: { $type: 'objectId' }, type: 'credit' } }
+);
+
 module.exports = mongoose.model('Transaction', transactionSchema);

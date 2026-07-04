@@ -67,15 +67,30 @@ const bookingSchema = new mongoose.Schema({
         gstAmount: Number,
         platformFee: Number,
         totalAmount: Number,
-        providerCommission: Number
+        providerCommission: Number,
+        amountPaid: { type: Number, default: 0 },
+        quoteStatus: {
+            type: String,
+            enum: ['not_required', 'pending_customer', 'approved', 'rejected'],
+            default: 'not_required'
+        }
     },
     otp: String, // For verification at arrival or completion
     razorpayOrderId: String,
     razorpayPaymentId: String,
+    razorpayOrderAmount: Number,
     rating: {
         score: Number,
         comment: String
-    }
+    },
+    completedAt: Date,
+    earningsCredited: { type: Boolean, default: false, select: false },
+    cancelledAt: Date,
+    cancellationReason: String
 }, { timestamps: true });
+
+bookingSchema.index({ status: 1, service: 1, scheduledDate: 1 });
+bookingSchema.index({ customer: 1, createdAt: -1 });
+bookingSchema.index({ provider: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Booking', bookingSchema);

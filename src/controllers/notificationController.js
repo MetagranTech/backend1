@@ -6,7 +6,11 @@ const admin = require('../config/firebase');
 // @access  Public
 exports.getNotifications = async (req, res) => {
     try {
-        const notifications = await Notification.find().sort({ createdAt: -1 });
+        const target = req.query.targetApp;
+        const query = target && ['customer', 'service'].includes(target)
+            ? { targetApp: { $in: [target, 'both'] } }
+            : {};
+        const notifications = await Notification.find(query).sort({ createdAt: -1 }).limit(100);
         res.status(200).json({
             success: true,
             count: notifications.length,
@@ -69,6 +73,10 @@ exports.createAdminNotification = async (req, res) => {
 exports.postReviewNotification = async (req, res) => {
     try {
         const { userName, userImage, rating, comment } = req.body;
+
+        if (!comment?.trim() || !Number.isFinite(Number(rating)) || Number(rating) < 1 || Number(rating) > 5) {
+            return res.status(400).json({ success: false, message: 'Valid rating and comment are required' });
+        }
 
         const notification = await Notification.create({
             title: `New Review from ${userName}`,

@@ -39,7 +39,7 @@ exports.sendMulticastNotification = async (tokens, notification, data = {}) => {
     };
 
     try {
-        const response = await admin.messaging().sendMulticast(message);
+        const response = await admin.messaging().sendEachForMulticast(message);
         console.log(`${response.successCount} notifications were sent successfully`);
         return response;
     } catch (error) {
