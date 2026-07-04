@@ -3,8 +3,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Provider = require('../models/Provider');
 const Admin = require('../models/Admin');
-const OtpChallenge = require('../models/OtpChallenge');
-const otpService = require('../services/otpService');
+const firebaseAdmin = require('../config/firebase');
 
 const generateToken = (id, type, role = type) => jwt.sign(
     { id, type, role }, process.env.JWT_SECRET,
@@ -22,98 +21,75 @@ const findAccount = (accountType, phone) => accountType === 'customer'
     ? User.findOne({ phone })
     : Provider.findOne({ phone });
 
-exports.sendOtp = async (req, res) => {
-    const phone = normalizePhone(req.body.phone);
-    const accountType = req.body.accountType;
-    const purpose = req.body.purpose;
+const validateFirebaseFlow = async (accountType, purpose, phone) => {
     if (!phone || !['customer', 'provider'].includes(accountType) || !['login', 'register'].includes(purpose)) {
-        return res.status(400).json({ success: false, message: 'Valid Indian phone, account type and purpose are required' });
+        return { status: 400, message: 'Valid Indian phone, account type and purpose are required' };
     }
     const account = await findAccount(accountType, phone);
-    if (purpose === 'login' && !account) return res.status(404).json({ success: false, message: 'Account not found. Please register first.' });
-    if (purpose === 'register' && account) return res.status(409).json({ success: false, message: 'Account already exists. Please login.' });
-    if (account?.status === 'suspended') return res.status(403).json({ success: false, message: 'Account is suspended' });
+    if (purpose === 'login' && !account) return { status: 404, message: 'Account not found. Please register first.' };
+    if (purpose === 'register' && account) return { status: 409, message: 'Account already exists. Please login.' };
+    if (account?.status === 'suspended') return { status: 403, message: 'Account is suspended' };
     if (accountType === 'provider' && purpose === 'login' && account?.status !== 'active') {
-        return res.status(403).json({ success: false, message: 'Provider account is pending admin approval' });
+        return { status: 403, message: 'Provider account is pending admin approval' };
     }
-    const recent = await OtpChallenge.findOne({
-        phone, accountType, purpose, createdAt: { $gt: new Date(Date.now() - 60000) }, consumedAt: null
-    }).sort('-createdAt');
-    if (recent) return res.status(429).json({ success: false, message: 'Please wait 60 seconds before requesting another OTP' });
-
-    const delivery = await otpService.send(phone);
-    const challenge = await OtpChallenge.create({
-        phone, accountType, purpose,
-        provider: delivery.provider,
-        providerRequestId: delivery.requestId,
-        testOtpHash: delivery.testOtpHash,
-        metadata: { name: req.body.name?.trim() },
-        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
-    });
-    const payload = { success: true, challengeId: challenge._id, expiresIn: 300, resendAfter: 60 };
-    if (delivery.provider === 'test' && process.env.NODE_ENV !== 'production') payload.testOtp = delivery.testOtp;
-    res.status(201).json(payload);
+    return { account };
 };
 
-exports.resendOtp = async (req, res) => {
-    const challenge = await OtpChallenge.findById(req.body.challengeId).select('+testOtpHash');
-    if (!challenge || challenge.consumedAt) return res.status(404).json({ success: false, message: 'OTP request not found' });
-    if (Date.now() - challenge.updatedAt.getTime() < 60000) {
-        return res.status(429).json({ success: false, message: 'Please wait 60 seconds before resending OTP' });
-    }
-    const delivery = await otpService.send(challenge.phone);
-    challenge.provider = delivery.provider;
-    challenge.providerRequestId = delivery.requestId;
-    challenge.testOtpHash = delivery.testOtpHash;
-    challenge.attempts = 0;
-    challenge.expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-    await challenge.save();
-    const payload = { success: true, challengeId: challenge._id, expiresIn: 300, resendAfter: 60 };
-    if (delivery.provider === 'test' && process.env.NODE_ENV !== 'production') payload.testOtp = delivery.testOtp;
-    res.json(payload);
+// Firebase sends the SMS from the Android apps. This endpoint prevents sending
+// an OTP for an impossible login/register flow before the client starts it.
+exports.checkFirebasePhone = async (req, res) => {
+    const phone = normalizePhone(req.body.phone);
+    const result = await validateFirebaseFlow(req.body.accountType, req.body.purpose, phone);
+    if (result.message) return res.status(result.status).json({ success: false, message: result.message });
+    res.json({ success: true, phone });
 };
 
-exports.verifyOtp = async (req, res) => {
-    const otp = String(req.body.otp || '');
-    const challenge = await OtpChallenge.findById(req.body.challengeId).select('+testOtpHash');
-    if (!challenge || challenge.consumedAt) return res.status(404).json({ success: false, message: 'OTP request not found or already used' });
-    if (challenge.expiresAt.getTime() <= Date.now()) return res.status(410).json({ success: false, message: 'OTP has expired' });
-    if (challenge.attempts >= 5) return res.status(429).json({ success: false, message: 'Too many invalid OTP attempts' });
-    if (!/^\d{4,8}$/.test(otp)) return res.status(400).json({ success: false, message: 'Enter a valid OTP' });
-    const attempt = await OtpChallenge.updateOne(
-        { _id: challenge._id, consumedAt: null, attempts: { $lt: 5 } },
-        { $inc: { attempts: 1 } }
-    );
-    if (attempt.modifiedCount !== 1) return res.status(429).json({ success: false, message: 'Too many invalid OTP attempts' });
-    const verified = await otpService.verify(challenge, otp);
-    if (!verified) return res.status(401).json({ success: false, message: 'Invalid OTP' });
-    const consumed = await OtpChallenge.findOneAndUpdate(
-        { _id: challenge._id, consumedAt: null, expiresAt: { $gt: new Date() } },
-        { consumedAt: new Date() }, { new: true }
-    );
-    if (!consumed) return res.status(409).json({ success: false, message: 'OTP was already used' });
+// Firebase proves ownership of the phone number; MongoDB remains the source of
+// truth for profiles/roles and this API still issues the app's JWT.
+exports.verifyFirebasePhone = async (req, res) => {
+    const { idToken, accountType, purpose } = req.body;
+    if (!idToken) return res.status(400).json({ success: false, message: 'Firebase ID token is required' });
 
-    if (challenge.accountType === 'provider' && challenge.purpose === 'register') {
+    let decoded;
+    try {
+        decoded = await firebaseAdmin.auth().verifyIdToken(idToken, true);
+    } catch (_) {
+        return res.status(401).json({ success: false, message: 'Phone verification is invalid or expired' });
+    }
+    if (decoded.firebase?.sign_in_provider !== 'phone') {
+        return res.status(401).json({ success: false, message: 'Phone authentication is required' });
+    }
+    const phone = normalizePhone(decoded.phone_number);
+    const result = await validateFirebaseFlow(accountType, purpose, phone);
+    if (result.message) return res.status(result.status).json({ success: false, message: result.message });
+
+    if (accountType === 'provider' && purpose === 'register') {
         const registrationToken = jwt.sign(
-            { type: 'provider_registration', phone: challenge.phone },
+            { type: 'provider_registration', phone, firebaseUid: decoded.uid },
             process.env.JWT_SECRET,
             { expiresIn: '15m', issuer: 'home-step-in-api' }
         );
-        return res.json({ success: true, registrationToken, phone: challenge.phone, purpose: 'register' });
+        return res.json({ success: true, registrationToken, phone, purpose });
     }
 
-    let account = await findAccount(challenge.accountType, challenge.phone);
-    if (challenge.accountType === 'customer' && challenge.purpose === 'register') {
+    let account = result.account;
+    if (accountType === 'customer' && purpose === 'register') {
         account = await User.create({
-            phone: challenge.phone,
-            name: challenge.metadata?.name || 'User',
+            phone,
+            firebaseUid: decoded.uid,
+            name: req.body.name?.trim() || 'User',
             referralCode: Math.random().toString(36).slice(2, 8).toUpperCase(),
             fcmToken: req.body.fcmToken
         });
+    } else if (account.firebaseUid && account.firebaseUid !== decoded.uid) {
+        return res.status(409).json({ success: false, message: 'Phone is linked to another Firebase account' });
+    } else if (!account.firebaseUid) {
+        account.firebaseUid = decoded.uid;
     }
-    if (!account) return res.status(404).json({ success: false, message: 'Account no longer exists' });
-    if (req.body.fcmToken) { account.fcmToken = req.body.fcmToken; await account.save(); }
-    const type = challenge.accountType;
+
+    if (req.body.fcmToken) account.fcmToken = req.body.fcmToken;
+    if (account.isModified()) await account.save();
+    const type = accountType;
     res.json({ success: true, token: generateToken(account._id, type), [type === 'customer' ? 'user' : 'provider']: account });
 };
 
@@ -135,7 +111,7 @@ exports.providerRegister = async (req, res) => {
     }
     if (await Provider.exists({ phone: verified.phone })) return res.status(409).json({ success: false, message: 'Provider already exists' });
     const provider = await Provider.create({
-        phone: verified.phone, name: name.trim(), categories,
+        phone: verified.phone, firebaseUid: verified.firebaseUid, name: name.trim(), categories,
         serviceArea: { type: 'Point', coordinates: coordinates.map(Number), radiusInKm: Number(serviceArea.radiusInKm) || 10 },
         fcmToken: req.body.fcmToken
     });

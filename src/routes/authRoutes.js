@@ -1,15 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { sendOtp, resendOtp, verifyOtp, providerRegister, adminLogin, updateFcmToken, me } = require('../controllers/authController');
+const { checkFirebasePhone, verifyFirebasePhone, providerRegister, adminLogin, updateFcmToken, me } = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/auth');
 const { upload } = require('../config/cloudinary');
 const Provider = require('../models/Provider');
 const { rateLimit } = require('../middleware/rateLimit');
 
 router.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 30 }));
-router.post('/otp/send', sendOtp);
-router.post('/otp/resend', resendOtp);
-router.post('/otp/verify', verifyOtp);
+router.post('/firebase/check', checkFirebasePhone);
+router.post('/firebase/verify', verifyFirebasePhone);
 router.post('/provider/register', providerRegister);
 router.post('/admin/login', adminLogin);
 router.get('/me', protect, me);
