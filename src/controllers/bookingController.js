@@ -5,6 +5,7 @@ const Provider = require('../models/Provider');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const { sendNotification, sendMulticastNotification } = require('../utils/notificationHelper');
+const { isAddressWithinServiceArea } = require('../utils/serviceArea');
 
 const totalPricing = (service, baseAmount, extraPartsAmount = 0) => {
     const taxable = Number(baseAmount) + Number(extraPartsAmount);
@@ -43,9 +44,12 @@ exports.createBooking = async (req, res) => {
         pricing
     });
 
-    const nearbyProviders = await Provider.find({
+    const eligibleProviders = await Provider.find({
         status: 'active', isOnline: true, categories: service.category, fcmToken: { $exists: true, $ne: '' }
-    }).select('fcmToken');
+    }).select('fcmToken serviceArea');
+    const nearbyProviders = eligibleProviders.filter((provider) =>
+        isAddressWithinServiceArea(provider.serviceArea, booking.address)
+    );
     await sendMulticastNotification(nearbyProviders.map((p) => p.fcmToken), {
         title: 'New booking available', body: `${service.name} job is available.`
     }, { bookingId: booking._id.toString() });
@@ -77,6 +81,9 @@ exports.acceptBooking = async (req, res) => {
     const candidate = await Booking.findById(req.params.id).populate('service');
     if (!candidate || !candidate.service || !req.user.categories.includes(candidate.service.category)) {
         return res.status(404).json({ success: false, message: 'Eligible booking not found' });
+    }
+    if (!isAddressWithinServiceArea(req.user.serviceArea, candidate.address)) {
+        return res.status(403).json({ success: false, message: 'Booking is outside your service radius' });
     }
     const booking = await Booking.findOneAndUpdate(
         { _id: req.params.id, status: 'pending', provider: null },

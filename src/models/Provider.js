@@ -27,6 +27,10 @@ const providerSchema = new mongoose.Schema({
     skills: [String],
     experience: Number,
     kycDetails: {
+        documentType: {
+            type: String,
+            enum: ['driving_license', 'aadhaar_card', 'voter_id']
+        },
         idProofUrl: String,
         skillProofUrl: String,
         status: {

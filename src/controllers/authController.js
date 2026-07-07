@@ -109,10 +109,18 @@ exports.providerRegister = async (req, res) => {
     if (!Array.isArray(coordinates) || coordinates.length !== 2 || coordinates.some((value) => !Number.isFinite(Number(value)))) {
         return res.status(400).json({ success: false, message: 'Valid service area coordinates [lng, lat] are required' });
     }
+    const normalizedCoordinates = coordinates.map(Number);
+    if (Math.abs(normalizedCoordinates[0]) > 180 || Math.abs(normalizedCoordinates[1]) > 90) {
+        return res.status(400).json({ success: false, message: 'Service area coordinates are outside valid longitude/latitude ranges' });
+    }
+    const radiusInKm = Number(serviceArea.radiusInKm);
+    if (!Number.isFinite(radiusInKm) || radiusInKm < 1 || radiusInKm > 100) {
+        return res.status(400).json({ success: false, message: 'Service radius must be between 1 and 100 km' });
+    }
     if (await Provider.exists({ phone: verified.phone })) return res.status(409).json({ success: false, message: 'Provider already exists' });
     const provider = await Provider.create({
         phone: verified.phone, firebaseUid: verified.firebaseUid, name: name.trim(), categories,
-        serviceArea: { type: 'Point', coordinates: coordinates.map(Number), radiusInKm: Number(serviceArea.radiusInKm) || 10 },
+        serviceArea: { type: 'Point', coordinates: normalizedCoordinates, radiusInKm },
         fcmToken: req.body.fcmToken
     });
     res.status(201).json({ success: true, token: generateToken(provider._id, 'provider'), provider });

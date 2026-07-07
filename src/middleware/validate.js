@@ -28,9 +28,13 @@ exports.validateBookingInput = (req, res, next) => {
     if (Number.isNaN(date.getTime()) || date.getTime() < Date.now() - 60000) {
         return res.status(400).json({ success: false, message: 'Scheduled date must be in the future' });
     }
-    if (coordinates && (!Number.isFinite(coordinates.lat) || !Number.isFinite(coordinates.lng))) {
-        return res.status(400).json({ success: false, message: 'Invalid address coordinates' });
+    const lat = Number(coordinates?.lat);
+    const lng = Number(coordinates?.lng);
+    if (!coordinates || !Number.isFinite(lat) || !Number.isFinite(lng)
+        || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+        return res.status(400).json({ success: false, message: 'Valid service address coordinates are required' });
     }
+    req.body.address.coordinates = { lat, lng };
     next();
 };
 

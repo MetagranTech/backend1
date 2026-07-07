@@ -19,7 +19,10 @@ router.post('/provider/kyc', protect, authorize('provider'), upload.fields([
 ]), async (req, res, next) => {
     try {
         if (!req.files?.idProof?.[0] || !req.files?.skillProof?.[0]) return res.status(400).json({ success: false, message: 'ID proof and skill proof are required' });
+        const documentTypes = ['driving_license', 'aadhaar_card', 'voter_id'];
+        if (!documentTypes.includes(req.body.documentType)) return res.status(400).json({ success: false, message: 'Select a valid document type' });
         const provider = await Provider.findByIdAndUpdate(req.user._id, {
+            'kycDetails.documentType': req.body.documentType,
             'kycDetails.idProofUrl': req.files.idProof[0].path,
             'kycDetails.skillProofUrl': req.files.skillProof[0].path,
             'kycDetails.status': 'pending',
