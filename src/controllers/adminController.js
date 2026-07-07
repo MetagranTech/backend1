@@ -1,6 +1,7 @@
 const Booking = require('../models/Booking');
 const Provider = require('../models/Provider');
 const User = require('../models/User');
+const { sendNotification } = require('../utils/notificationHelper');
 
 exports.getStats = async (req, res) => {
     const [totalBookings, activeProviders, totalCustomers, revenueData, dailyRevenue] = await Promise.all([
@@ -32,6 +33,9 @@ exports.updateProviderStatus = async (req, res) => {
     if (!['active', 'pending', 'suspended'].includes(status)) {
         return res.status(400).json({ success: false, message: 'Invalid provider status' });
     }
+    const existingProvider = await Provider.findById(req.params.id).select('status fcmToken');
+    if (!existingProvider) return res.status(404).json({ success: false, message: 'Provider not found' });
+
     const update = { status };
     if (status === 'active') update['kycDetails.status'] = 'approved';
     if (status === 'pending' && rejectionReason) {
@@ -39,7 +43,15 @@ exports.updateProviderStatus = async (req, res) => {
         update['kycDetails.rejectionReason'] = rejectionReason;
     }
     const provider = await Provider.findByIdAndUpdate(req.params.id, update, { new: true });
-    if (!provider) return res.status(404).json({ success: false, message: 'Provider not found' });
+    if (status === 'active' && existingProvider.status !== 'active') {
+        await sendNotification(existingProvider.fcmToken, {
+            title: 'Provider request approved',
+            body: 'Your request to work as a provider in the Service Man App has been approved.'
+        }, {
+            type: 'provider_approved',
+            providerId: provider._id.toString()
+        });
+    }
     res.json({ success: true, provider });
 };
 
