@@ -32,4 +32,35 @@ const isAddressWithinServiceArea = (serviceArea, address) => {
     ) <= radiusInKm;
 };
 
-module.exports = { distanceInKm, isAddressWithinServiceArea };
+const isProviderWithinCustomerRequestRadius = (serviceArea, address, requestRadiusInKm = 10) => {
+    const providerCoordinates = serviceArea?.coordinates;
+    const customerLat = Number(address?.coordinates?.lat);
+    const customerLng = Number(address?.coordinates?.lng);
+    const radiusInKm = Number(requestRadiusInKm);
+
+    if (!Array.isArray(providerCoordinates) || providerCoordinates.length !== 2
+        || !Number.isFinite(Number(providerCoordinates[0]))
+        || !Number.isFinite(Number(providerCoordinates[1]))
+        || !Number.isFinite(customerLat) || !Number.isFinite(customerLng)
+        || !Number.isFinite(radiusInKm) || radiusInKm <= 0) {
+        return false;
+    }
+
+    return distanceInKm(
+        Number(providerCoordinates[1]),
+        Number(providerCoordinates[0]),
+        customerLat,
+        customerLng
+    ) <= radiusInKm;
+};
+
+const isProviderEligibleForBookingRequest = (serviceArea, address) =>
+    isProviderWithinCustomerRequestRadius(serviceArea, address)
+    && isAddressWithinServiceArea(serviceArea, address);
+
+module.exports = {
+    distanceInKm,
+    isAddressWithinServiceArea,
+    isProviderWithinCustomerRequestRadius,
+    isProviderEligibleForBookingRequest
+};

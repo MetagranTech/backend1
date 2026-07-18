@@ -1,7 +1,7 @@
 const Provider = require('../models/Provider');
 const Booking = require('../models/Booking');
 const Transaction = require('../models/Transaction');
-const { isAddressWithinServiceArea } = require('../utils/serviceArea');
+const { isProviderEligibleForBookingRequest } = require('../utils/serviceArea');
 
 exports.updateAvailability = async (req, res) => {
     req.user.isOnline = Boolean(req.body.isOnline);
@@ -20,11 +20,14 @@ exports.updateLocation = async (req, res) => {
 };
 
 exports.getAvailableJobs = async (req, res) => {
+    if (!req.user.isOnline || req.user.status !== 'active') {
+        return res.json({ success: true, bookings: [] });
+    }
     const services = await require('../models/Service').find({ category: { $in: req.user.categories }, isActive: true }).select('_id');
     const candidates = await Booking.find({ status: 'pending', provider: null, service: { $in: services.map((s) => s._id) } })
         .populate('service').populate('customer', 'name').sort({ scheduledDate: 1 }).limit(500);
     const bookings = candidates
-        .filter((booking) => isAddressWithinServiceArea(req.user.serviceArea, booking.address))
+        .filter((booking) => isProviderEligibleForBookingRequest(req.user.serviceArea, booking.address))
         .slice(0, 100);
     res.json({ success: true, bookings });
 };

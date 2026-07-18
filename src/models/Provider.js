@@ -56,6 +56,11 @@ const providerSchema = new mongoose.Schema({
             type: [Number], // [lng, lat]
             required: true
         },
+        locationName: {
+            type: String,
+            trim: true,
+            default: ''
+        },
         radiusInKm: {
             type: Number,
             default: 10

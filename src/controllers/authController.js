@@ -117,10 +117,11 @@ exports.providerRegister = async (req, res) => {
     if (!Number.isFinite(radiusInKm) || radiusInKm < 1 || radiusInKm > 100) {
         return res.status(400).json({ success: false, message: 'Service radius must be between 1 and 100 km' });
     }
+    const locationName = String(serviceArea.locationName || '').trim();
     if (await Provider.exists({ phone: verified.phone })) return res.status(409).json({ success: false, message: 'Provider already exists' });
     const provider = await Provider.create({
         phone: verified.phone, firebaseUid: verified.firebaseUid, name: name.trim(), categories,
-        serviceArea: { type: 'Point', coordinates: normalizedCoordinates, radiusInKm },
+        serviceArea: { type: 'Point', coordinates: normalizedCoordinates, locationName, radiusInKm },
         fcmToken: req.body.fcmToken
     });
     res.status(201).json({ success: true, token: generateToken(provider._id, 'provider'), provider });

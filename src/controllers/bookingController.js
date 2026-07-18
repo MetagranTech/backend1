@@ -5,7 +5,7 @@ const Provider = require('../models/Provider');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const { sendNotification, sendMulticastNotification } = require('../utils/notificationHelper');
-const { isAddressWithinServiceArea } = require('../utils/serviceArea');
+const { isAddressWithinServiceArea, isProviderEligibleForBookingRequest } = require('../utils/serviceArea');
 
 const totalPricing = (service, baseAmount, extraPartsAmount = 0) => {
     const taxable = Number(baseAmount) + Number(extraPartsAmount);
@@ -48,7 +48,7 @@ exports.createBooking = async (req, res) => {
         status: 'active', isOnline: true, categories: service.category, fcmToken: { $exists: true, $ne: '' }
     }).select('fcmToken serviceArea');
     const nearbyProviders = eligibleProviders.filter((provider) =>
-        isAddressWithinServiceArea(provider.serviceArea, booking.address)
+        isProviderEligibleForBookingRequest(provider.serviceArea, booking.address)
     );
     await sendMulticastNotification(nearbyProviders.map((p) => p.fcmToken), {
         title: 'New booking available', body: `${service.name} job is available.`
@@ -67,9 +67,18 @@ exports.getBookings = async (req, res) => {
 
 exports.getBooking = async (req, res) => {
     const ownership = req.authType === 'customer' ? { customer: req.user._id } : { provider: req.user._id };
-    const booking = await Booking.findOne({ _id: req.params.id, ...ownership })
+    let booking = await Booking.findOne({ _id: req.params.id, ...ownership })
         .select(req.authType === 'provider' ? '-otp' : '')
         .populate('service').populate('customer', 'name phone').populate('provider', 'name phone profilePic');
+    if (!booking && req.authType === 'provider' && req.user.isOnline && req.user.status === 'active') {
+        const candidate = await Booking.findOne({ _id: req.params.id, status: 'pending', provider: null })
+            .select('-otp')
+            .populate('service').populate('customer', 'name phone').populate('provider', 'name phone profilePic');
+        if (candidate?.service && req.user.categories.includes(candidate.service.category)
+            && isProviderEligibleForBookingRequest(req.user.serviceArea, candidate.address)) {
+            booking = candidate;
+        }
+    }
     if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
     res.json({ success: true, booking });
 };

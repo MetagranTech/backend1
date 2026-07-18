@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const notificationSchema = new mongoose.Schema({
     type: {
         type: String,
-        enum: ['review', 'offer', 'update'],
+        enum: ['review', 'offer', 'coupon', 'update', 'maintenance'],
         required: true
     },
     title: {
