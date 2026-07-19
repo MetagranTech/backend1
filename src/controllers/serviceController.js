@@ -2,6 +2,7 @@ const Service = require('../models/Service');
 
 exports.listServices = async (req, res) => {
     const query = req.authType === 'admin' && req.query.includeInactive === 'true' ? {} : { isActive: true };
+    if (req.query.category) query.category = req.query.category;
     const services = await Service.find(query).sort({ category: 1, name: 1 });
     res.json({ success: true, services });
 };
