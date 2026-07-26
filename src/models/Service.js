@@ -13,7 +13,9 @@ const serviceSchema = new mongoose.Schema({
     category: {
         type: String,
         required: true,
-        enum: ['Electrician', 'Plumbing', 'AC Repair', 'Fridge Repair', 'Washing Machine Repair', 'Tank Cleaning', 'Bathroom Cleaning', 'Home Cleaning']
+        trim: true,
+        minlength: 2,
+        maxlength: 80
     },
     basePrice: {
         type: Number,
@@ -21,7 +23,11 @@ const serviceSchema = new mongoose.Schema({
     },
     pricingType: {
         type: String,
-        enum: ['fixed', 'inspection'],
+        required: true,
+        trim: true,
+        lowercase: true,
+        minlength: 2,
+        maxlength: 40,
         default: 'inspection'
     },
     gstPercentage: {

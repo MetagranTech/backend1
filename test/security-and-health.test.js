@@ -30,10 +30,24 @@ test('booking validation rejects past schedules and invalid service ids', () => 
     assert.equal(res.statusCode, 400);
 });
 
-test('service schema rejects unsupported categories', () => {
-    const service = new Service({ name: 'Invalid', category: 'Unknown', basePrice: 100 });
-    const error = service.validateSync();
+test('service schema accepts custom categories and pricing types with safe limits', () => {
+    const custom = new Service({
+        name: 'Custom service',
+        category: 'Solar Panel Care',
+        pricingType: 'subscription',
+        basePrice: 100
+    });
+    assert.equal(custom.validateSync(), undefined);
+
+    const invalid = new Service({
+        name: 'Invalid',
+        category: 'A',
+        pricingType: 'X'.repeat(41),
+        basePrice: 100
+    });
+    const error = invalid.validateSync();
     assert.ok(error.errors.category);
+    assert.ok(error.errors.pricingType);
 });
 
 test('Indian phone normalization accepts mobile numbers and rejects invalid input', () => {
