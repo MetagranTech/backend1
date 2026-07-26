@@ -5,6 +5,7 @@ const { validatePositiveAmount, validateBookingInput } = require('../src/middlew
 const Service = require('../src/models/Service');
 const userController = require('../src/controllers/userController');
 const { _test: authTest } = require('../src/controllers/authController');
+const { isAllowedOrigin } = require('../src/utils/corsOrigins');
 
 const responseDouble = () => {
     const result = { statusCode: 200, payload: null };
@@ -62,4 +63,15 @@ test('health route responds without database access', async () => {
     await layer.route.stack[0].handle({}, res);
     assert.equal(res.statusCode, 200);
     assert.equal(res.payload.status, 'OK');
+});
+
+test('CORS allows Step In Vercel admin previews without allowing unrelated origins', () => {
+    const configured = ['https://admin.stepin.example'];
+    assert.equal(
+        isAllowedOrigin('https://admin-panel-7x3seuadk-step-in.vercel.app', configured),
+        true
+    );
+    assert.equal(isAllowedOrigin('https://admin.stepin.example', configured), true);
+    assert.equal(isAllowedOrigin('https://admin-panel-attacker.vercel.app', configured), false);
+    assert.equal(isAllowedOrigin('https://step-in.vercel.app.attacker.example', configured), false);
 });

@@ -6,6 +6,7 @@ const path = require('path');
 const { webhook } = require('./controllers/paymentController');
 const { protect, admin } = require('./middleware/auth');
 const { rateLimit } = require('./middleware/rateLimit');
+const { isAllowedOrigin } = require('./utils/corsOrigins');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -15,7 +16,7 @@ app.use(helmet());
 const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean);
 app.use(cors({
     origin(origin, callback) {
-        if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
+        if (isAllowedOrigin(origin, allowedOrigins)) return callback(null, true);
         callback(new Error('Origin not allowed by CORS'));
     },
     credentials: true
