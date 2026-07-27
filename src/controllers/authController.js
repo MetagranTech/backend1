@@ -148,6 +148,19 @@ exports.updateFcmToken = async (req, res) => {
     res.json({ success: true });
 };
 
-exports.me = async (req, res) => res.json({ success: true, type: req.authType, user: req.user });
+exports.me = async (req, res) => {
+    if (req.authType !== 'provider') {
+        return res.json({ success: true, type: req.authType, user: req.user });
+    }
+    const totalCompletedJobs = await require('../models/Booking').countDocuments({
+        provider: req.user._id,
+        status: 'completed'
+    });
+    res.json({
+        success: true,
+        type: req.authType,
+        user: { ...req.user.toObject(), totalCompletedJobs }
+    });
+};
 
 exports._test = { normalizePhone };

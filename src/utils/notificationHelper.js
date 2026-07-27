@@ -11,6 +11,12 @@ exports.sendNotification = async (token, notification, data = {}) => {
 
     const message = {
         notification,
+        android: {
+            notification: {
+                icon: 'ic_stat_step_in',
+                color: '#1068A8'
+            }
+        },
         data,
         token,
     };
@@ -34,6 +40,12 @@ exports.sendMulticastNotification = async (tokens, notification, data = {}) => {
 
     const message = {
         notification,
+        android: {
+            notification: {
+                icon: 'ic_stat_step_in',
+                color: '#1068A8'
+            }
+        },
         data,
         tokens,
     };

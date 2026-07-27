@@ -9,7 +9,7 @@ const {
 const { protect, admin } = require('../middleware/auth');
 
 // Public or Protected (depending on requirement, but mobile app needs it)
-router.get('/', getNotifications);
+router.get('/', protect, getNotifications);
 
 // Review notification (triggered by mobile app after order)
 router.post('/review', protect, postReviewNotification);

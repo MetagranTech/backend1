@@ -41,6 +41,11 @@ const providerSchema = new mongoose.Schema({
         rejectionReason: String
     },
     bankDetails: {
+        payoutMethod: {
+            type: String,
+            enum: ['upi', 'bank']
+        },
+        upiId: String,
         accountHolderName: String,
         accountNumber: String,
         ifscCode: String,

@@ -28,6 +28,15 @@ const notificationSchema = new mongoose.Schema({
         enum: ['customer', 'service', 'both'],
         default: 'customer'
     },
+    recipientProvider: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Provider',
+        index: true
+    },
+    booking: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Booking'
+    },
     createdAt: {
         type: Date,
         default: Date.now,

@@ -4,8 +4,10 @@ const Service = require('../models/Service');
 const Provider = require('../models/Provider');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
+const Notification = require('../models/Notification');
 const { sendNotification, sendMulticastNotification } = require('../utils/notificationHelper');
 const { isAddressWithinServiceArea, isProviderEligibleForBookingRequest } = require('../utils/serviceArea');
+const { isBookingRequestPast } = require('../utils/bookingSchedule');
 
 const totalPricing = (service, baseAmount, extraPartsAmount = 0) => {
     const taxable = Number(baseAmount) + Number(extraPartsAmount);
@@ -74,7 +76,8 @@ exports.getBooking = async (req, res) => {
         const candidate = await Booking.findOne({ _id: req.params.id, status: 'pending', provider: null })
             .select('-otp')
             .populate('service').populate('customer', 'name phone').populate('provider', 'name phone profilePic');
-        if (candidate?.service && req.user.categories.includes(candidate.service.category)
+        if (candidate?.service && !isBookingRequestPast(candidate)
+            && req.user.categories.includes(candidate.service.category)
             && isProviderEligibleForBookingRequest(req.user.serviceArea, candidate.address)) {
             booking = candidate;
         }
@@ -90,6 +93,9 @@ exports.acceptBooking = async (req, res) => {
     const candidate = await Booking.findById(req.params.id).populate('service');
     if (!candidate || !candidate.service || !req.user.categories.includes(candidate.service.category)) {
         return res.status(404).json({ success: false, message: 'Eligible booking not found' });
+    }
+    if (isBookingRequestPast(candidate)) {
+        return res.status(409).json({ success: false, message: 'This booking request has expired' });
     }
     if (!isAddressWithinServiceArea(req.user.serviceArea, candidate.address)) {
         return res.status(403).json({ success: false, message: 'Booking is outside your service radius' });
@@ -173,7 +179,9 @@ exports.completeService = async (req, res) => {
     ).populate('service');
     if (!booking) return res.status(409).json({ success: false, message: 'Booking already completed' });
 
-    const providerEarnings = Number((booking.pricing.totalAmount * 0.8).toFixed(2));
+    // Providers earn only the service base price. GST and platform fees stay
+    // outside the provider wallet and are reconciled by the platform.
+    const providerEarnings = Number(Number(booking.pricing.baseAmount || 0).toFixed(2));
     await Provider.findByIdAndUpdate(req.user._id, { $inc: { walletBalance: providerEarnings } });
     await Transaction.create({
         provider: req.user._id, booking: booking._id, type: 'credit', amount: providerEarnings,
@@ -203,6 +211,31 @@ exports.rateBooking = async (req, res) => {
     );
     if (!booking) return res.status(409).json({ success: false, message: 'Booking cannot be rated' });
     const ratings = await Booking.aggregate([{ $match: { provider: booking.provider, 'rating.score': { $exists: true } } }, { $group: { _id: null, average: { $avg: '$rating.score' }, count: { $sum: 1 } } }]);
-    await Provider.findByIdAndUpdate(booking.provider, { rating: ratings[0]?.average || 0, totalRatings: ratings[0]?.count || 0 });
+    const provider = await Provider.findByIdAndUpdate(
+        booking.provider,
+        { rating: ratings[0]?.average || 0, totalRatings: ratings[0]?.count || 0 },
+        { new: true }
+    ).select('name fcmToken');
+    const customerName = req.user.name?.trim() || 'A customer';
+    const comment = req.body.comment?.trim();
+    const title = `New ${score}★ rating`;
+    const body = comment
+        ? `${customerName}: ${comment}`
+        : `${customerName} rated your completed service ${score} stars.`;
+    await Notification.create({
+        type: 'review',
+        title,
+        body,
+        userName: customerName,
+        rating: score,
+        targetApp: 'service',
+        recipientProvider: booking.provider,
+        booking: booking._id
+    });
+    await sendNotification(provider?.fcmToken, { title, body }, {
+        type: 'provider_rating',
+        bookingId: booking._id.toString(),
+        rating: String(score)
+    });
     res.json({ success: true, booking });
 };

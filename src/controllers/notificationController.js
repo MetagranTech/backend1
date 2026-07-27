@@ -7,9 +7,18 @@ const admin = require('../config/firebase');
 exports.getNotifications = async (req, res) => {
     try {
         const target = req.query.targetApp;
-        const query = target && ['customer', 'service'].includes(target)
+        let query = target && ['customer', 'service'].includes(target)
             ? { targetApp: { $in: [target, 'both'] } }
             : {};
+        if (req.authType === 'provider') {
+            query = {
+                ...query,
+                $or: [
+                    { recipientProvider: req.user._id },
+                    { recipientProvider: { $exists: false } }
+                ]
+            };
+        }
         const notifications = await Notification.find(query).sort({ createdAt: -1 }).limit(100);
         res.status(200).json({
             success: true,
@@ -43,6 +52,12 @@ exports.createAdminNotification = async (req, res) => {
             notification: {
                 title: title,
                 body: body,
+            },
+            android: {
+                notification: {
+                    icon: 'ic_stat_step_in',
+                    color: '#1068A8'
+                }
             },
             topic: targetApp === 'service' ? 'service_notifications' : 'customer_notifications',
         };
@@ -93,6 +108,12 @@ exports.postReviewNotification = async (req, res) => {
             notification: {
                 title: `${userName} gave a ${rating}★ review!`,
                 body: comment,
+            },
+            android: {
+                notification: {
+                    icon: 'ic_stat_step_in',
+                    color: '#1068A8'
+                }
             },
             topic: 'customer_notifications',
         };
