@@ -56,6 +56,13 @@ test('Indian phone normalization accepts mobile numbers and rejects invalid inpu
     assert.equal(authTest.normalizePhone('12345'), null);
 });
 
+test('email and password registration credentials are validated', () => {
+    assert.equal(authTest.normalizeEmail(' User@Example.COM '), 'user@example.com');
+    assert.equal(authTest.normalizeEmail('not-an-email'), null);
+    assert.equal(authTest.validatePassword('12345678'), true);
+    assert.equal(authTest.validatePassword('short'), false);
+});
+
 test('customer profile setup accepts a single-line address', async () => {
     const addresses = [];
     const req = {

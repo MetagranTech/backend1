@@ -3,8 +3,8 @@ const mongoose = require('mongoose');
 const providerSchema = new mongoose.Schema({
     phone: {
         type: String,
-        required: true,
         unique: true,
+        sparse: true,
         trim: true
     },
     name: {
@@ -14,9 +14,12 @@ const providerSchema = new mongoose.Schema({
     },
     email: {
         type: String,
+        required: true,
+        unique: true,
         trim: true,
         lowercase: true
     },
+    passwordHash: { type: String, select: false },
     profilePic: {
         type: String,
         default: ''
@@ -93,11 +96,6 @@ const providerSchema = new mongoose.Schema({
     },
     lastLocationUpdate: Date,
     fcmToken: String,
-    firebaseUid: {
-        type: String,
-        unique: true,
-        sparse: true
-    },
     status: {
         type: String,
         enum: ['pending', 'active', 'suspended'],

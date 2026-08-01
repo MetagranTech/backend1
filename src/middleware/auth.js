@@ -3,7 +3,6 @@ const User = require('../models/User');
 const Provider = require('../models/Provider');
 const Admin = require('../models/Admin');
 
-// Firebase Admin initialization (should be done in a separate config file ideally)
 // For now, we'll assume it's initialized in config/firebase.js
 
 exports.protect = async (req, res, next) => {
